@@ -1,0 +1,277 @@
+#!/data/user/0/com.termux/files/usr/bin/bash
+
+banner() {
+toilet "$(figlet "LEOSENVIP")" -f term --gay  | pv -qL 3000
+}
+
+
+soucre_pak="/sdcard/XYPUBG/Soucre/"
+cache_pak="/sdcard/XYPUBG/Cache/"
+result_pak="/sdcard/XYPUBG/Result/"
+id_skin="/sdcard/XYPUBG/id_skin.txt"
+input_pak="/sdcard/XYPUBG/Game_patch"
+
+# Kiểm tra và tạo thư mục nếu chưa tồn tại
+mkdir -p "$soucre_pak" "$cache_pak" "$result_pak" "$input_pak"
+
+# Kiểm tra file id_skin.txt, tạo nếu chưa có
+[ ! -f "$id_skin" ] && touch "$id_skin"
+
+# Unpack file paks
+
+unpackingpak () {
+    base_name=$(basename "$selected_file" .pak)
+    OUTPUTNC="$soucre_pak/$base_name"
+    
+    if [ ! -f "$selected_file" ]; then
+        echo -e "${LRED}Error: File $selected_file not found!${NC}"
+        exit 1
+    fi
+
+    mkdir -p "$OUTPUTNC"
+    echo "Created folder $OUTPUTNC"
+
+    # Unpack the PAK file without chunking
+    if ./pakskin -a "$input_pak/$(basename "$selected_file")" "$OUTPUTNC"; then
+        echo "Unpacking completed successfully"
+              
+    else
+        echo -e "${LRED}Error: Unpacking of $selected_file failed!${NC}"
+        exit 1
+    fi
+}
+
+# Start unpack pak
+
+function unpackpak {
+    toilet -f term -F gay "𝗣𝗜𝗖𝗞𝗘𝗗 𝗢𝗣𝗧𝗜𝗢𝗡 𝗨𝗡𝗣𝗔𝗖𝗞 𝗣𝗔𝗞" | pv -qL 2999
+    prompt="𝗦𝗘𝗟𝗘𝗖𝗧 𝗢𝗣𝗧𝗜𝗢𝗡 :"
+    options=($(find /sdcard/XYPUBG/Game_patch -name "*.pak" 2>/dev/null))
+    
+    if [ ${#options[@]} -eq 0 ]; then
+        echo -e "${LRED}No .pak files found in Game_patch.${NC}"
+        return
+    fi
+
+    PS3="$prompt "
+    while true; do
+        
+        # Manually format options with [1], [2], etc.
+        for i in "${!options[@]}"; do         
+        echo -e "${LBLUE}[$((i+1))] ${options[i]}${NC}"
+        done        
+        toilet -f term -F gay "[$(( ${#options[@]} + 1 ))] Back"
+        read -p "$PS3" REPLY
+
+        if (( REPLY == ${#options[@]} + 1 )); then
+            echo -e "${LRED}Returning to main menu...${NC}"
+            return
+        elif (( REPLY > 0 && REPLY <= ${#options[@]} )); then
+            selected_file="${options[$REPLY-1]}"
+            echo "You picked $selected_file which is file $REPLY"
+            
+            if command -v unpackingpak &> /dev/null; then
+                unpackingpak "$selected_file"  # Pass selected file as argument
+            else
+                echo "Error: unpackingpak command not found."
+            fi
+            return
+        else
+            echo -e "${LRED}Invalid option. Try another one.${NC}"
+        fi
+    done
+}
+
+
+
+# Hàm thay đổi giá trị hex
+edit_hex_value() {
+    local decimal_value=$1
+    local new_decimal_value=$2
+
+    # Kiểm tra giá trị đầu vào là số
+    if ! [[ $decimal_value =~ ^[0-9]+$ ]]; then
+        echo -e "${LRED}Giá trị decimal không hợp lệ: $decimal_value${NC}"
+        return 1
+    fi
+
+    local hex_value=$(printf "%08X" $decimal_value)
+    local reversed_hex=$(echo "$hex_value" | sed 's/../& /g' | awk '{for(i=NF;i>0;i--) printf $i; print ""}')
+    local formatted_hex=$(echo "$reversed_hex" | sed 's/../\\x&/g')
+
+    if [ -z "$(ls -A "$soucre_pak")" ]; then
+        echo -e "${LRED}Không tìm thấy tài nguyên nào!${NC}"
+        exit 1
+    fi
+
+    local search_result=$(LANG=C grep -robUaP "$formatted_hex" "$soucre_pak" | tr -d '\0' | head -n 1)
+    if [ -z "$search_result" ]; then
+        echo -e "${LRED}Không tìm thấy kết quả cho skin ID này.${NC}"
+        return 1
+    fi
+
+    local file_path=$(echo "$search_result" | cut -d: -f1)
+    local user_hex_offset=$(echo "$search_result" | cut -d: -f2)
+
+    cp "$file_path" "$cache_pak"
+    [ ! -f "$result_pak/$(basename "$file_path")" ] && cp "$file_path" "$result_pak"
+
+    local pattern_hex=$(echo "FFFFFF" | sed 's/../\\x&/g')
+    local last_match=$(LANG=C grep -robUaP "$pattern_hex" "$cache_pak" | tr -d '\0' | awk -v max_offset="$user_hex_offset" -F: '$2 <= max_offset' | tail -n 1)
+
+    if [ -n "$last_match" ]; then
+        local last_offset=$(echo "$last_match" | cut -d: -f2)
+        local new_offset=$((last_offset - 9))
+        local extracted_bytes=$(dd if="$file_path" bs=1 skip="$new_offset" count=2 2>/dev/null | xxd -p)
+        echo -e "${LRED}OFFSET:${NC} ${LBLUE}$new_offset${NC} 👉 ${LBLUE}$extracted_bytes${NC}"
+    fi
+
+    rm -rf "$cache_pak"/*
+
+    if ! [[ $new_decimal_value =~ ^[0-9]+$ ]]; then
+        echo -e "${LRED}Giá trị mới không hợp lệ: $new_decimal_value${NC}"
+        return 1
+    fi
+
+    local new_hex_value=$(printf "%08X" $new_decimal_value)
+    local new_reversed_hex=$(echo "$new_hex_value" | sed 's/../& /g' | awk '{for(i=NF;i>0;i--) printf $i; print ""}')
+    local new_formatted_hex=$(echo "$new_reversed_hex" | sed 's/../\\x&/g')
+
+    local new_search_result=$(LANG=C grep -robUaP "$new_formatted_hex" "$soucre_pak" | tr -d '\0' | head -n 1)
+    if [ -z "$new_search_result" ]; then
+        echo -e "${LRED}Không tìm thấy kết quả cho skin ID mới!${NC}"
+        return 1
+    fi
+
+    local new_file_path=$(echo "$new_search_result" | cut -d: -f1)
+    local new_user_hex_offset=$(echo "$new_search_result" | cut -d: -f2)
+    local new_pattern_hex=$(echo "FFFFFF" | sed 's/../\\x&/g')
+
+    cp "$new_file_path" "$cache_pak"
+    local new_last_match=$(LANG=C grep -robUaP "$new_pattern_hex" "$cache_pak" | tr -d '\0' | awk -v max_offset="$new_user_hex_offset" -F: '$2 <= max_offset' | tail -n 1)
+
+    if [ -n "$new_last_match" ]; then
+        local new_last_offset=$(echo "$new_last_match" | cut -d: -f2)
+        local new_new_offset=$((new_last_offset - 9))
+        local new_extracted_bytes=$(dd if="$new_file_path" bs=1 skip="$new_new_offset" count=2 2>/dev/null | xxd -p)
+
+        echo -e "${LRED}OFFSET:${NC} ${PURPLE}$new_new_offset${NC} 👉 ${PURPLE}$new_extracted_bytes${NC}"
+        echo -n -e "\\x${new_extracted_bytes:0:2}\\x${new_extracted_bytes:2:2}" | dd of="$result_pak/$(basename "$file_path")" bs=1 seek="$new_offset" conv=notrunc 2>/dev/null
+        echo -e "${LGREEN}Đã thay đổi bytes tại offset ${LBLUE}$new_offset${NC} ${LGREEN}👉 ${NC}${PURPLE}$new_extracted_bytes${NC}"
+    fi
+
+    rm -rf "$cache_pak"/*
+}
+
+function repack() {
+    PAKS_DIR="/sdcard/XYPUBG/Game_patch"
+    TEMP_DIR=$(mktemp -d)
+    SKINPAK="/data/user/0/com.termux/files/home/LEOSENVIP/pakskin"
+    RESULT_PAK="/storage/emulated/0/XYPUBG/Result"
+    UEXP="$RESULT_PAK"
+
+    LRED="\e[91m"  # Red color
+    LGREEN="\e[92m"  # Green color
+    NC="\e[0m"  # No color
+
+    pak_files=("$PAKS_DIR"/game_patch_*.pak)
+    if [ ${#pak_files[@]} -eq 0 ]; then
+        echo -e "${LRED}Không tìm thấy file .pak trong $PAKS_DIR. Quay lại menu chính.${NC}"
+        sleep 2
+        return
+    fi
+
+    if [ -z "$(ls -A "$RESULT_PAK")" ]; then
+        echo -e "${LRED}${NC}"
+    fi
+
+    cp "${pak_files[0]}" "$RESULT_PAK"
+    result_pak_file="$RESULT_PAK/$(basename "${pak_files[0]}")"
+    echo -e "${LRED}Đang tiến hành đóng gói!${NC}"
+
+    count=0
+    total=3
+    start=$(date +%s)
+    while [ $count -lt $total ]; do
+        sleep 1
+        cur=$(date +%s)
+        count=$((count + 1))
+        pd=$((count * 73 / total))
+        runtime=$((cur - start))
+        estremain=$(((runtime * total / count) - runtime))
+        printf "\r%d.%d%% complete - est %d:%02d \e[K" $((count * 100 / total)) $(((count * 1000 / total) % 10)) $((estremain / 60)) $((estremain % 60))
+    done
+    echo ""
+
+    "$SKINPAK" -a -r "$result_pak_file" "$RESULT_PAK"
+    
+    # Automatically delete .uexp files after successful repack
+    if [ $? -eq 0 ]; then
+        rm -f "$UEXP"/*.uexp
+        echo -e "${LGREEN}Successfully packed!${NC}"
+    else
+        echo -e "${LRED}Đóng gói thất bại!${NC}"
+    fi
+
+    rm -rf "$TEMP_DIR"
+    sleep 2   
+    echo -e "${LGREEN}PAK mod skin file is saved at $result_pak!${NC}"
+    exit
+}
+
+function mainskin() {
+toilet "  𝗢𝗣𝗘𝗡 𝗠𝗘𝗡𝗨 𝗠𝗢𝗗 𝗦𝗞𝗜𝗡  " -f term -F border --gay  | pv -qL 3000
+    rm -rf "$result_pak"/*
+    if [ ! -s "$id_skin" ]; then
+        echo -e "${LRED}${NC}"
+    fi
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=$(echo "$line" | tr -d '[]\r\n ' )
+        decimal_value=$(echo "$line" | cut -d, -f1)
+        new_decimal_value=$(echo "$line" | cut -d, -f2)
+        edit_hex_value "$decimal_value" "$new_decimal_value"
+    done < "$id_skin"
+    sleep 3
+    repack
+}
+
+function menu {
+  toilet "  𝗢𝗣𝗘𝗡 𝗠𝗘𝗡𝗨 𝗦𝗞𝗜𝗡 𝗧𝗢𝗢𝗟  " -f term -F border --gay | pv -qL 3000
+  toilet -f term -F gay "[1] 𝗨𝗡𝗣𝗔𝗖𝗞 𝗣𝗔𝗞" | pv -qL 2999
+  toilet -f term -F gay "[2] 𝗠𝗢𝗗 𝗦𝗞𝗜𝗡" | pv -qL 2999
+  toilet -f term -F gay "[3] 𝗘𝗫𝗜𝗧" | pv -qL 2999
+  read -p "𝗦𝗘𝗟𝗘𝗖𝗧 𝗢𝗣𝗧𝗜𝗢𝗡 : " choice
+}
+
+# MAIN EXECUTION
+clear
+Coloring
+banner
+
+
+while true; do
+  menu
+  case $choice in
+    1)
+      unpackpak
+      ;;
+    2)
+      mainskin
+      ;;
+    3)
+      echo -e "${LRED}Exit tool...${NC}"
+      exit 0
+      ;;
+    *)
+      echo -e "${LRED}Invalid option. Try another one.${NC}"
+      ;;
+  esac
+done
+
+
+
+
+
+
+
